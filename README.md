@@ -21,19 +21,26 @@ at a bank or a regulator actually has to route and summarize.
 
 ## Data
 
-Consumer Financial Protection Bureau, Consumer Complaint Database — public, no API key.
+Consumer Financial Protection Bureau, Consumer Complaint Database — originally sourced by CFPB,
+pulled here through a historical mirror (see below).
 
-- Search API: `https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/`
-  (verified live 2026-09-16; supports `size`, `frm`, `no_aggs`, `field`, `search_term`,
-  `date_received_min`, `product`, `has_narrative`)
-- Bulk CSV: `https://files.consumerfinance.gov/ccdb/complaints.csv.zip`
-- Field reference: `https://cfpb.github.io/api/ccdb/api.html`
+As of 2026-09-16, the live CFPB channels no longer expose narrative text at all: the search
+API's `_source` has no narrative field, `&format=csv` on the API has no narrative column, the
+bulk `complaints.csv.zip` has no narrative column, and CFPB's own field reference
+(`https://cfpb.github.io/api/ccdb/fields.html`) no longer lists one. All three checked and
+confirmed narrative-free before falling back to a mirror.
 
-Structured fields used: `product`, `sub_product`, `issue`, `sub_issue`, `company`,
-`company_response`, `timely`, `state`, `date_received`, `complaint_id`.
-Text field: the consumer narrative (`complaint_what_happened` in the API,
-`Consumer complaint narrative` in the bulk CSV). Only a minority of complaints carry a
-narrative, so the modeling set is the narrative-bearing subset.
+- Data used: [Consumer Complaint Dataset](https://www.kaggle.com/datasets/namigabbasov/consumer-complaint-dataset)
+  on Kaggle — a snapshot of the same CFPB database taken while narratives were still public.
+  Covers complaints received 2015-03-19 through 2024-07-30. Downloaded via the Kaggle API.
+- Field reference (for context on the original source): `https://cfpb.github.io/api/ccdb/fields.html`
+
+Structured fields used: `product`, `sub_product`, `issue`, `company`, `timely`, `state`,
+`date_received`. (`company_response` and `sub_issue` aren't in this mirror, so they're
+dropped from the original plan's field list.) Text field: `narrative`. The mirror is
+pre-filtered to narrative-bearing complaints only, so no separate has-narrative filter is
+needed; a working set of 75,000 rows is sampled from the ~2M available for a size that's
+fast to iterate on.
 
 ## Method
 
@@ -68,11 +75,21 @@ python src/fetch.py          # caches complaints into data/raw/
 python src/train.py          # writes metrics and figures/
 ```
 
+`fetch.py` downloads from Kaggle, so it needs a Kaggle API token at `~/.kaggle/kaggle.json`
+(Kaggle account > Settings > Create New Token). If `data/raw/complaints.csv.zip` is already
+cached, it skips the download.
+
 ## Caveats
 
+- Data is a historical mirror, not a live pull: it covers complaints received through
+  2024-07-30 only, because CFPB stopped publishing narrative text on its live channels
+  before this project started (see Data section).
 - Narrative-bearing complaints are self-selected: the consumer had to consent to publication,
   so they are not a random sample of complaints.
-- `product` labels are assigned at intake and are themselves noisy, which caps achievable accuracy.
+- `product` labels are assigned at intake and are themselves noisy, which caps achievable
+  accuracy — the label taxonomy was also renamed multiple times over the data's date range
+  (e.g. three different label strings for what is effectively "credit reporting"), which is
+  exactly the kind of near-duplicate class the plan calls for collapsing before modeling.
 - Redaction (`XXXX`) removes names, amounts and dates, so any signal that depended on those is gone.
 - Company mix shifts over time, so a chronological test split is a harder and more honest
   evaluation than a random one.
