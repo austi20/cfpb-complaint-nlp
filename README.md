@@ -44,17 +44,70 @@ fast to iterate on.
 
 ## Method
 
-- Train/test split is **chronological**, not random: train on earlier complaints, test on
-  the most recent slice. A random split leaks time-varying vocabulary and inflates scores.
-- Baseline: majority-class predictor, reported explicitly so the model has something to beat.
-- Model: TF-IDF (word + character n-grams) into linear classifiers, tuned on a validation
-  slice. Macro-F1 is the headline metric because the product classes are badly imbalanced.
-- Interpretability: top weighted terms per class, and a normalized confusion matrix.
+- The split is **chronological**, not random. The 75,000 complaints are sorted by
+  `date_received`, the oldest 70% train, the next 15% validate and the newest 15% are held
+  out as test. A random split leaks vocabulary that only exists late in the date range and
+  inflates the score.
+- CFPB renamed its product labels several times, so three spellings of credit reporting and
+  three of payday lending are the same product with different strings. Aliases are merged
+  first, then any product left with fewer than 500 complaints is collapsed into `Other`
+  rather than pretended to be predictable. That leaves 10 classes.
+- `XXXX` redaction spans are replaced with a space before vectorizing. They are not signal.
+- Baseline: always predict the majority class, reported explicitly so the model has
+  something to beat.
+- Model: TF-IDF word 1 to 2 grams into a linear classifier, with class weights balanced
+  because credit reporting is 60% of the training rows. Macro F1 is the headline metric
+  because the classes are badly imbalanced.
+- Interpretability: top weighted terms per class, and a confusion matrix normalized by true
+  class.
 - Themes: NMF topic modeling run per product on the narrative subset.
 
 ## Results
 
-_Populated when the run is complete._
+The split falls at these dates:
+
+| slice | rows | date range |
+|---|---|---|
+| train | 52,500 | 2015-03-19 to 2023-06-08 |
+| validation | 11,250 | 2023-06-08 to 2024-01-18 |
+| test | 11,250 | 2024-01-18 to 2024-07-30 |
+
+Baseline first. Always guessing the majority class, credit reporting, gets 71.4% accuracy on
+validation but a macro F1 of **0.083**, which is what happens when one class is 71% of a ten
+class problem. Accuracy is the wrong metric here and the baseline is the reason why.
+
+| model | validation accuracy | validation macro F1 |
+|---|---|---|
+| majority class baseline | 0.714 | 0.083 |
+| TF-IDF into LogisticRegression | 0.866 | 0.661 |
+| TF-IDF into LinearSVC | 0.879 | **0.668** |
+
+**LinearSVC beats the majority class baseline by 0.585 macro F1 on validation, 0.668 against
+0.083.** The two linear models are close enough that the choice barely matters, 0.007 apart.
+
+Two things I checked instead of assuming:
+
+- Character 3 to 5 grams, added alongside the word features, made it slightly worse, 0.662
+  against 0.668. They are not in the final model.
+- `min_df` is almost flat between 2 and 20, 0.670 down to 0.660. It is set to 5, which keeps
+  147,000 features instead of 343,000 for the same score.
+
+![confusion matrix](figures/confusion_matrix.png)
+
+The confusion matrix is normalized by true class, so each row sums to 1 and the small classes
+stay readable. Where it goes wrong is the interesting part:
+
+- 26% of debt collection complaints are called credit reporting. That is a genuine overlap,
+  not a bug. A consumer disputing a collection account usually describes the credit report
+  entry, because the credit report is where they noticed it.
+- 31% of money transfer complaints are called bank account. Also reasonable, since a person
+  describing a transfer that never arrived is describing their bank.
+- Payday or personal loan is the worst class at 0.44 recall and scatters across six others.
+  It is the smallest real class and the vocabulary it uses is shared with every other kind of
+  loan.
+
+The test slice has not been scored. That happens once, at the end, and becomes the headline
+number.
 
 ## Repo layout
 
@@ -72,7 +125,7 @@ requirements.txt
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python src/fetch.py          # caches complaints into data/raw/
-python src/train.py          # writes metrics and figures/
+python src/train.py          # prints the metrics, writes figures/confusion_matrix.png
 ```
 
 `fetch.py` downloads from Kaggle, so it needs a Kaggle API token at `~/.kaggle/kaggle.json`
@@ -87,9 +140,12 @@ cached, it skips the download.
 - Narrative-bearing complaints are self-selected: the consumer had to consent to publication,
   so they are not a random sample of complaints.
 - `product` labels are assigned at intake and are themselves noisy, which caps achievable
-  accuracy — the label taxonomy was also renamed multiple times over the data's date range
-  (e.g. three different label strings for what is effectively "credit reporting"), which is
-  exactly the kind of near-duplicate class the plan calls for collapsing before modeling.
+  accuracy. The taxonomy was also renamed several times across the date range, so the aliases
+  are merged before modeling (see Method).
+- A chronological split means classes can appear or disappear across the cut. `Debt or credit
+  management` shows up only after the training cutoff and `Consumer Loan` only before it.
+  Both are small enough to land in `Other`, but this is the honest cost of splitting by date,
+  and a random split would have hidden it.
 - Redaction (`XXXX`) removes names, amounts and dates, so any signal that depended on those is gone.
 - Company mix shifts over time, so a chronological test split is a harder and more honest
   evaluation than a random one.
