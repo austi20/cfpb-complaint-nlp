@@ -2,20 +2,18 @@
 
 Splits chronologically, scores a majority-class baseline, then compares
 TF-IDF into LogisticRegression and LinearSVC on validation macro-F1.
-The test slice is not touched here.
+The test slice is not touched here. That is evaluate.py.
 """
 import os
 
-import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.svm import LinearSVC
 
 HERE = os.path.dirname(__file__)
 PARQUET_PATH = os.path.join(HERE, "..", "data", "raw", "complaints.parquet")
-FIGURE_PATH = os.path.join(HERE, "..", "figures", "confusion_matrix.png")
 
 # CFPB renamed several products over the years. Merge the aliases.
 PRODUCT_MAP = {
@@ -40,18 +38,24 @@ TRAIN_END = 0.70
 VAL_END = 0.85
 
 
+def build_labels(products):
+    """Merge the renamed aliases, then bin anything too rare to predict."""
+    labels = products.map(PRODUCT_MAP).fillna(products)
+    counts = labels.value_counts()
+    rare = counts[counts < MIN_CLASS_SIZE].index
+    return labels.where(~labels.isin(rare), "Other")
+
+
+def strip_redaction(narratives):
+    """XXXX is redaction, not signal."""
+    return narratives.str.replace(r"X{2,}", " ", regex=True)
+
+
 def load_data():
     df = pd.read_parquet(PARQUET_PATH)
     df["date_received"] = pd.to_datetime(df["date_received"])
-
-    df["label"] = df["product"].map(PRODUCT_MAP).fillna(df["product"])
-    counts = df["label"].value_counts()
-    rare = counts[counts < MIN_CLASS_SIZE].index
-    df.loc[df["label"].isin(rare), "label"] = "Other"
-
-    # XXXX is redaction, not signal
-    df["text"] = df["narrative"].str.replace(r"X{2,}", " ", regex=True)
-
+    df["label"] = build_labels(df["product"])
+    df["text"] = strip_redaction(df["narrative"])
     return df.sort_values("date_received")
 
 
@@ -107,21 +111,6 @@ def main():
     lift = results[best]["macro_f1"] - baseline["macro_f1"]
     print(f"\nbest on validation: {best}, macro-F1 {results[best]['macro_f1']:.4f}, "
           f"{lift:.4f} above the baseline")
-
-    save_confusion_matrix(models[best], x_val, val["label"], best)
-
-
-def save_confusion_matrix(model, x_val, true_labels, model_name):
-    """Normalized by true class, so small classes are still readable."""
-    fig, ax = plt.subplots(figsize=(9, 8))
-    ConfusionMatrixDisplay.from_estimator(
-        model, x_val, true_labels, normalize="true", values_format=".2f",
-        xticks_rotation=45, cmap="Blues", colorbar=False, ax=ax,
-    )
-    ax.set_title(f"{model_name} on validation, normalized by true class")
-    plt.tight_layout()
-    plt.savefig(FIGURE_PATH, dpi=150)
-    print(f"wrote {FIGURE_PATH}")
 
 
 if __name__ == "__main__":

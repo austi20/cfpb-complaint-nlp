@@ -42,9 +42,6 @@ def download():
 
 
 def build_parquet():
-    if os.path.exists(PARQUET_PATH):
-        print(f"using cached {PARQUET_PATH}")
-        return
     df = pd.read_csv(ZIP_PATH, usecols=list(COLUMN_MAP), dtype=str)
     df = df.rename(columns=COLUMN_MAP)
     df = df.dropna(subset=["narrative"])
@@ -53,6 +50,14 @@ def build_parquet():
     print(f"wrote {len(df)} rows to {PARQUET_PATH}")
 
 
-if __name__ == "__main__":
+def main():
+    # the parquet is all the other scripts read, so a cached one ends the job here
+    if os.path.exists(PARQUET_PATH):
+        print(f"using cached {PARQUET_PATH}")
+        return
     download()
     build_parquet()
+
+
+if __name__ == "__main__":
+    main()
