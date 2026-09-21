@@ -259,9 +259,10 @@ The tests cover the label merging and the chronological split, and need no data:
 python -m pytest
 ```
 
-`fetch.py` downloads from Kaggle, so it needs a Kaggle API token at `~/.kaggle/kaggle.json`
-(Kaggle account > Settings > Create New Token). If `data/raw/complaints.csv.zip` is already
-cached, it skips the download.
+`fetch.py` downloads from Kaggle, so it needs a Kaggle API token, either at
+`~/.kaggle/kaggle.json` (Kaggle account > Settings > Create New Token) or in the
+`KAGGLE_USERNAME` and `KAGGLE_KEY` environment variables. The download is about 700 MB and
+runs once. If `data/raw/complaints.parquet` already exists, every script skips straight to it.
 
 ## Caveats
 
