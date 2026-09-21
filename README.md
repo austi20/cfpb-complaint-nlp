@@ -29,7 +29,7 @@ letters, which are a document format rather than a complaint.
 
 ## Data
 
-Consumer Financial Protection Bureau, Consumer Complaint Database — originally sourced by CFPB,
+Consumer Financial Protection Bureau, Consumer Complaint Database, originally sourced by CFPB,
 pulled here through a historical mirror (see below).
 
 As of 2026-09-16, the live CFPB channels no longer expose narrative text at all: the search
@@ -39,7 +39,7 @@ bulk `complaints.csv.zip` has no narrative column, and CFPB's own field referenc
 confirmed narrative-free before falling back to a mirror.
 
 - Data used: [Consumer Complaint Dataset](https://www.kaggle.com/datasets/namigabbasov/consumer-complaint-dataset)
-  on Kaggle — a snapshot of the same CFPB database taken while narratives were still public.
+  on Kaggle, a snapshot of the same CFPB database taken while narratives were still public.
   Covers complaints received 2015-03-19 through 2024-07-30. Downloaded via the Kaggle API.
 - Field reference (for context on the original source): `https://cfpb.github.io/api/ccdb/fields.html`
 
