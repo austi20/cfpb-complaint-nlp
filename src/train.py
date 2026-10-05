@@ -6,6 +6,7 @@ The test slice is not touched here. That is evaluate.py.
 """
 import os
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -36,6 +37,7 @@ PRODUCT_MAP = {
 MIN_CLASS_SIZE = 500
 TRAIN_END = 0.70
 VAL_END = 0.85
+N_BOOTSTRAP = 1000
 
 
 def build_labels(products):
@@ -75,6 +77,21 @@ def score(true_labels, predicted):
     }
 
 
+def bootstrap_gap(true_labels, first, second):
+    """95% interval on macro F1 of first minus second, same rows resampled."""
+    true_labels = np.asarray(true_labels)
+    first = np.asarray(first)
+    second = np.asarray(second)
+    rng = np.random.default_rng(42)
+    gaps = []
+    for _ in range(N_BOOTSTRAP):
+        rows = rng.integers(0, len(true_labels), len(true_labels))
+        gap = (f1_score(true_labels[rows], first[rows], average="macro", zero_division=0)
+               - f1_score(true_labels[rows], second[rows], average="macro", zero_division=0))
+        gaps.append(gap)
+    return np.percentile(gaps, [2.5, 97.5])
+
+
 def main():
     df = load_data()
     train, val, test = split(df)
@@ -101,16 +118,20 @@ def main():
     }
 
     results = {}
+    predictions = {}
     for name, model in models.items():
         model.fit(x_train, train["label"])
-        predicted = model.predict(x_val)
-        results[name] = score(val["label"], predicted)
+        predictions[name] = model.predict(x_val)
+        results[name] = score(val["label"], predictions[name])
         print(f"{name:20} acc {results[name]['accuracy']:.4f}  macro-F1 {results[name]['macro_f1']:.4f}")
 
     best = max(results, key=lambda name: results[name]["macro_f1"])
     lift = results[best]["macro_f1"] - baseline["macro_f1"]
     print(f"\nbest on validation: {best}, macro-F1 {results[best]['macro_f1']:.4f}, "
           f"{lift:.4f} above the baseline")
+
+    low, high = bootstrap_gap(val["label"], predictions["LinearSVC"], predictions["LogisticRegression"])
+    print(f"LinearSVC minus LogisticRegression, 95% bootstrap interval {low:.4f} to {high:.4f}")
 
 
 if __name__ == "__main__":

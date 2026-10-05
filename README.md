@@ -13,10 +13,14 @@ imbalance across products. That is the point. It is the kind of text an analytic
 at a bank or a regulator actually has to route and summarize.
 
 **What I found:** a TF-IDF and LinearSVC classifier reaches **0.656 macro F1** on a
-chronologically held out test slice, against **0.085** for a majority class baseline.
-The errors it makes are mostly real overlap in the CFPB taxonomy rather than noise, and
-the topic models turned up a theme the taxonomy has no label for: credit repair template
-letters, which are a document format rather than a complaint.
+chronologically held out test slice, against **0.085** for a majority class baseline and
+**0.643** for logistic regression on the same features. With a confidence cutoff set on
+validation, it routes **70% of new complaints** on its own at **93.8% precision** and leaves 30%
+for a person. The errors it makes are mostly real overlap in the CFPB taxonomy rather than
+noise, and the topic models turned up a theme the taxonomy has no label for: credit repair
+template letters, which are a document format rather than a complaint. **43% of the debt
+collection complaints it files under credit reporting cite the Fair Credit Reporting Act**,
+against 12% of the ones it gets right.
 
 ## Questions
 
@@ -61,16 +65,24 @@ fast to iterate on.
   first, then any product left with fewer than 500 complaints is collapsed into `Other`
   rather than pretended to be predictable. That leaves 10 classes.
 - `XXXX` redaction spans are replaced with a space before vectorizing. They are not signal.
-- Baseline: always predict the majority class, reported explicitly so the model has
-  something to beat.
+- Baselines: always predict the majority class, which shows why accuracy is the wrong
+  metric, and logistic regression on the same features, which is the baseline a real
+  model has to beat.
 - Model: TF-IDF word 1 to 2 grams into a linear classifier, with class weights balanced
   because credit reporting is 60% of the training rows. Macro F1 is the headline metric
   because the classes are badly imbalanced.
 - The model is picked on validation, then refit on train plus validation and scored on the
   test slice once. Validation is spent by then, and folding it back in lets the model see
   vocabulary right up to the test cutoff.
+- The gap between the two linear models gets a 95% interval from a paired bootstrap: resample
+  the scored rows 1,000 times with replacement, score both models on each resample, keep the
+  difference.
 - Interpretability: top weighted terms per class, and a confusion matrix normalized by true
   class.
+- Routing: the LinearSVC decision score is used as a confidence. The cutoff is the lowest one
+  where the complaints above it are 95% correct on validation, set with the model trained
+  before validation, then applied unchanged to the test slice. Precision here means the
+  share of routed complaints that land in the right product.
 - Themes: NMF with six topics per product, fit on every complaint in that product rather
   than the training slice, because this is description and not prediction. Topics are named
   by hand from their top terms and compared against the CFPB `issue` labels.
@@ -98,8 +110,10 @@ class problem. Accuracy is the wrong metric here and the baseline is the reason 
 | TF-IDF into LogisticRegression | 0.866 | 0.661 |
 | TF-IDF into LinearSVC | 0.879 | **0.668** |
 
-The two linear models are close enough that the choice barely matters, 0.007 apart. Two
-things I checked instead of assuming:
+The two linear models are 0.007 apart, and that gap is within noise. A paired bootstrap puts the 95%
+interval on LinearSVC minus logistic regression at **-0.003 to 0.018**, which includes zero.
+Picking LinearSVC here was close to a coin flip, and I locked it anyway so the test slice
+would only be scored once. Two things I checked instead of assuming:
 
 - Character 3 to 5 grams, added alongside the word features, made it slightly worse, 0.662
   against 0.668. They are not in the final model.
@@ -111,30 +125,42 @@ things I checked instead of assuming:
 | model | test accuracy | test macro F1 |
 |---|---|---|
 | majority class baseline | 0.745 | 0.085 |
+| TF-IDF into LogisticRegression | 0.847 | 0.643 |
 | TF-IDF into LinearSVC | 0.866 | **0.656** |
 
 **LinearSVC scores 0.656 macro F1 on complaints it has never seen, from a six month window
 after everything it was trained on, against 0.085 for the majority class baseline. That is a
 lift of 0.570.**
 
+Logistic regression is the fairer comparison, and LinearSVC beats it by much less: 0.013 on
+test, with a bootstrap interval of **0.001 to 0.025**. That just clears zero, so the edge is small
+and only just outside noise. The bootstrap resamples the scored rows, not the model fits, so
+it understates the uncertainty if anything. Logistic regression was refit and scored on the test slice after the model was
+locked, as a check on the choice, not as a second chance to pick. Almost all of the lift over
+the majority baseline comes from TF-IDF features in a balanced linear model, not from which
+linear model.
+
 Test came in 0.012 below validation, 0.656 against 0.668. That gap is the honest cost of the
 chronological split, and it is small enough that the validation number was not badly
 optimistic.
 
-Per class on test:
+Per class on test, LinearSVC with the logistic regression F1 alongside:
 
-| class | precision | recall | F1 | test rows |
-|---|---|---|---|---|
-| Credit reporting | 0.921 | 0.943 | 0.931 | 8,379 |
-| Mortgage | 0.780 | 0.921 | 0.844 | 215 |
-| Student loan | 0.800 | 0.806 | 0.803 | 139 |
-| Bank account | 0.752 | 0.791 | 0.771 | 387 |
-| Money transfer | 0.705 | 0.696 | 0.701 | 158 |
-| Credit card | 0.712 | 0.682 | 0.697 | 661 |
-| Vehicle loan or lease | 0.655 | 0.655 | 0.655 | 116 |
-| Payday or personal loan | 0.625 | 0.571 | 0.597 | 70 |
-| Debt collection | 0.620 | 0.505 | 0.556 | 1,100 |
-| Other | 0.000 | 0.000 | 0.000 | 25 |
+| class | precision | recall | F1 | LogReg F1 | test rows |
+|---|---|---|---|---|---|
+| Credit reporting | 0.921 | 0.943 | 0.931 | 0.918 | 8,379 |
+| Mortgage | 0.780 | 0.921 | 0.844 | 0.824 | 215 |
+| Student loan | 0.800 | 0.806 | 0.803 | 0.770 | 139 |
+| Bank account | 0.752 | 0.791 | 0.771 | 0.767 | 387 |
+| Money transfer | 0.705 | 0.696 | 0.701 | 0.714 | 158 |
+| Credit card | 0.712 | 0.682 | 0.697 | 0.680 | 661 |
+| Vehicle loan or lease | 0.655 | 0.655 | 0.655 | 0.622 | 116 |
+| Payday or personal loan | 0.625 | 0.571 | 0.597 | 0.599 | 70 |
+| Debt collection | 0.620 | 0.505 | 0.556 | 0.534 | 1,100 |
+| Other | 0.000 | 0.000 | 0.000 | 0.000 | 25 |
+
+LinearSVC is ahead on seven classes, ties on `Other` and is behind on money transfer and payday,
+by 0.013 and 0.002. No class goes from usable to unusable between the two models.
 
 `Other` scores a flat zero. It is the bin the rare renamed products were collapsed into, so it
 has no vocabulary of its own, and the model never once predicts it. Reporting it as zero is
@@ -151,10 +177,38 @@ stay readable. Where it goes wrong is the interesting part:
   where they noticed it. It was 26% on the validation window and 44% on the test window, so
   the overlap is getting worse over time, which is exactly the kind of drift a random split
   would have hidden.
+- **A lot of that error is credit repair letters.** 486 of the 1,100 debt collection complaints
+  in test are called credit reporting. 210 of those 486, 43%, cite the Fair Credit Reporting
+  Act (`FCRA`, `Fair Credit Reporting Act`, `1681` or `605B`), against 12% of the debt collection
+  complaints the model gets right. A debt collection complaint that cites the FCRA is
+  called credit reporting 76% of the time, one that does not 33% of the time. The share citing
+  it also rose from 15% of debt collection on validation to 25% on test. At the test error
+  rates that shift is worth about 4 points, so it explains only a small part of the jump from
+  26% to 44%.
 - **25% of money transfer complaints are called bank account.** Also reasonable, since a
   person describing a transfer that never arrived is describing their bank.
 - Payday or personal loan holds 0.57 recall and scatters across six other classes. It is the
   smallest real class and its vocabulary is shared with every other kind of loan.
+
+### What it would do for a routing team
+
+A complaint team does not need every complaint classified. It needs the ones the model is sure
+about taken off the pile. With the cutoff set on validation to hit 95% precision:
+
+| | test complaints | share |
+|---|---|---|
+| routed automatically | 7,858 | 69.8% |
+| left for a person | 3,392 | 30.2% |
+
+**On the six months after its training data, the model would route 7 in 10 new complaints
+without a person touching them, and 93.8% of those would land in the right product.** It
+misses the 95% target by 1.2 points on test. Some of that is likely the same drift that shows
+up everywhere else in this project, but the cutoff was set on the model fit before validation
+and applied to the refit model, whose scores sit on a slightly different scale, so I cannot
+split the miss between the two. It still routes 52% of the complaints that are not credit reporting, so it is
+not just waving the easy majority class through. The majority baseline cannot do this at all:
+sending everything to credit reporting is right 74.5% of the time, and there is no cutoff to
+tighten.
 
 ### What the model actually keys on
 
@@ -235,7 +289,7 @@ the same thing twice.
 
 ```
 src/            data pull, cleaning, model selection, evaluation, topics
-tests/          unit tests for the labelling and the split
+tests/          unit tests for the labelling, the split, the routing cutoff and the bootstrap
 notebooks/      exploratory analysis
 figures/        committed charts used in the README
 data/raw/       cached download and parquet (gitignored)
@@ -249,11 +303,12 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 python src/fetch.py          # caches complaints into data/raw/
 python src/train.py          # model selection on validation, prints the metrics
-python src/evaluate.py       # scores the test slice, writes both figures
+python src/evaluate.py       # test scores, error and routing numbers, both figures
 python src/topics.py         # NMF topics and CFPB issue labels per product
 ```
 
-The tests cover the label merging and the chronological split, and need no data:
+The tests cover the label merging, the chronological split, the FCRA check, the routing
+cutoff and the bootstrap, and need no data:
 
 ```bash
 python -m pytest
@@ -283,6 +338,14 @@ runs once. If `data/raw/complaints.parquet` already exists, every script skips s
   evaluation than a random one.
 - Much of the model's weight sits on company names rather than problem language (see the
   top terms figure). It would degrade on a company that was not in the training window.
+- The FCRA citation check is four plain strings, chosen from the NMF topic terms, and those
+  topics were fit on every row including test, so the 43% is descriptive rather than a held
+  out number. It misses template letters that do not cite the statute, it catches the
+  occasional genuine complaint that does, and `1681` can match an amount or account number, so
+  it is a rough measure of the template effect, not an exact one.
+- The routing cutoff was set on validation and only reached 93.8% precision on test. Anyone
+  deploying it would need to watch precision on fresh complaints and move the cutoff as the
+  mix drifts.
 - The `Other` class scores 0.000 F1 and drags the macro average down by roughly 0.07. It is
   kept in the number anyway, because collapsing rare classes into a bin and then excluding
   that bin from the metric would be scoring a problem easier than the one being solved.
